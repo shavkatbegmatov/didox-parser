@@ -10,28 +10,18 @@ if ($zipFiles.Count -eq 0) {
     exit
 }
 
-# 1. YANADA MUSTAHKAMLANGAN FORMATLASH FUNKSIYALARI
-$formatPul = {
+# 1. SUMMALARNI VA SONLARNI TO'G'RI FORMATLASH
+# Buni skriptning o'zida emas, Excelning NumberFormat orqali qilganimiz ancha xavfsiz. 
+# Shuning uchun bu funksiyalarda faqat sof raqamga o'giramiz.
+$convertToNumber = {
     param($val)
-    if ($null -eq $val -or $val -eq "") { return "0,00" }
+    if ($null -eq $val -or $val -eq "") { return 0 }
     try {
-        # Matn bo'lsa ham majburan sof matematik raqamga (Double) o'tkazamiz
-        $num = [Convert]::ToDouble($val, [System.Globalization.CultureInfo]::InvariantCulture)
-        return $num.ToString("0.00", [System.Globalization.CultureInfo]::InvariantCulture) -replace '\.', ','
+        # Agar nuqta yoki vergul bo'lsa, invariant madaniyat bilan double ga o'tkazish
+        $valStr = [string]$val -replace ',', '.'
+        return [Convert]::ToDouble($valStr, [System.Globalization.CultureInfo]::InvariantCulture)
     } catch {
-        # Favqulodda holatda (xato bersa) faqat matndagi nuqtani almashtiramiz
-        return [string]$val -replace '\.', ','
-    }
-}
-
-$formatSoni = {
-    param($val)
-    if ($null -eq $val -or $val -eq "") { return "0" }
-    try {
-        $num = [Convert]::ToDouble($val, [System.Globalization.CultureInfo]::InvariantCulture)
-        return $num.ToString("0.##", [System.Globalization.CultureInfo]::InvariantCulture) -replace '\.', ','
-    } catch {
-        return [string]$val -replace '\.', ','
+        return 0
     }
 }
 
@@ -53,34 +43,47 @@ function Read-ZipArchive {
 
                 $data = $jsonString | ConvertFrom-Json
 
-                $fakturaId = $data.facturaid
-                $fakturaNo = $data.facturadoc.facturano
-                $fakturaDate = $data.facturadoc.facturadate
-                $contractNo = $data.contractdoc.contractno
-                $contractDate = $data.contractdoc.contractdate
+                # Barcha identifikator va kodlarni Excel avtomatik raqam deb o'ylamasligi uchun
+                # PowerShell darajasida qat'iy [string] qilib olamiz.
+                $fakturaId = [string]$data.facturaid
+                $fakturaNo = [string]$data.facturadoc.facturano
+                $fakturaDate = [string]$data.facturadoc.facturadate
+                $contractNo = [string]$data.contractdoc.contractno
+                $contractDate = [string]$data.contractdoc.contractdate
                 
-                $sellerName = $data.seller.name
-                $sellerStir = $data.sellertin
-                $sellerVat = $data.seller.vatregcode
-                $sellerAcc = $data.seller.account
-                $sellerMfo = $data.seller.bankid
-                $sellerAddr = $data.seller.address
-                $sellerDir = $data.seller.director
-                $sellerAccnt = $data.seller.accountant
+                $sellerName = [string]$data.seller.name
+                $sellerStir = [string]$data.sellertin
+                $sellerVat = [string]$data.seller.vatregcode
+                $sellerAcc = [string]$data.seller.account
+                $sellerMfo = [string]$data.seller.bankid
+                $sellerAddr = [string]$data.seller.address
+                $sellerDir = [string]$data.seller.director
+                $sellerAccnt = [string]$data.seller.accountant
                 
-                $buyerName = $data.buyer.name
-                $buyerStir = $data.buyertin
-                $buyerVat = $data.buyer.vatregcode
-                $buyerAcc = $data.buyer.account
-                $buyerMfo = $data.buyer.bankid
-                $buyerAddr = $data.buyer.address
-                $buyerDir = $data.buyer.director
-                $buyerAccnt = $data.buyer.accountant
+                $buyerName = [string]$data.buyer.name
+                $buyerStir = [string]$data.buyertin
+                $buyerVat = [string]$data.buyer.vatregcode
+                $buyerAcc = [string]$data.buyer.account
+                $buyerMfo = [string]$data.buyer.bankid
+                $buyerAddr = [string]$data.buyer.address
+                $buyerDir = [string]$data.buyer.director
+                $buyerAccnt = [string]$data.buyer.accountant
 
                 $products = $data.productlist.products
 
                 if ($null -ne $products -and $products.Count -gt 0) {
                     foreach ($product in $products) {
+                        
+                        $katalogCode = [string]$product.catalogcode
+                        
+                        # Summalarni sof raqam sifatida olamiz, Excel formatlaydi
+                        $soni = &$convertToNumber $product.count
+                        $narxi = &$convertToNumber $product.summa
+                        $yetkazibBerish = &$convertToNumber $product.deliverysum
+                        $qqsStavkasi = &$convertToNumber $product.vatrate
+                        $qqsSummasi = &$convertToNumber $product.vatsum
+                        $jamiSumma = &$convertToNumber $product.deliverysumwithvat
+
                         $row = [PSCustomObject]@{
                             "Hujjat ID" = $fakturaId
                             "Hujjat Raqami" = $fakturaNo
@@ -108,16 +111,16 @@ function Read-ZipArchive {
                             
                             "Mahsulot T/R" = $product.ordno
                             "Mahsulot Nomi" = $product.name
-                            "Katalog Kodi" = $product.catalogcode
+                            "Katalog Kodi" = $katalogCode
                             "Katalog Nomi" = $product.catalogname
                             "O'lchov Birligi" = $product.packagename
                             
-                            "Soni" = &$formatSoni $product.count
-                            "Narxi" = &$formatPul $product.summa
-                            "Yetkazib Berish Narxi (QQSsiz)" = &$formatPul $product.deliverysum
-                            "QQS Stavkasi (%)" = $product.vatrate
-                            "QQS Summasi" = &$formatPul $product.vatsum
-                            "Jami Summa (QQS bilan)" = &$formatPul $product.deliverysumwithvat
+                            "Soni" = $soni
+                            "Narxi" = $narxi
+                            "Yetkazib Berish Narxi (QQSsiz)" = $yetkazibBerish
+                            "QQS Stavkasi (%)" = $qqsStavkasi
+                            "QQS Summasi" = $qqsSummasi
+                            "Jami Summa (QQS bilan)" = $jamiSumma
                         }
                         $script:results += $row
                     }
@@ -159,12 +162,29 @@ $exportPath = "Maksimal_Fakturalar_hisoboti.xlsx"
 $excel = $script:results | Export-Excel -Path $exportPath -AutoSize -BoldTopRow -FreezeTopRow -PassThru
 $sheet = $excel.Workbook.Worksheets[1]
 
-# Maxsus ustunlarni Excel buzib yubormasligi uchun sof MATN ("@") tipiga o'tkazish
-# Hujjat(2), Shartnoma(4), STIR(7, 15), QQS(8, 16), H/R(9, 17), MFO(10, 18), Katalog kodi(24)
-$textCols = 2, 4, 7, 8, 9, 10, 15, 16, 17, 18, 24
+# -----------------------------------------------------------------------------
+# 1. MATNLI USTUNLARNI FORMATLASH (E+ VA NOLLARNI YO'QOTISH UCHUN)
+# Excelda "@" formati qat'iy matn degani. Bu orqali 20 xonali H/R lar nollarga aylanib ketmaydi
+# va STIR/QQS/Katalog kodlar E+ ko'rinishiga kelmaydi.
+# Ustunlar: Hujjat(2), Shartnoma(4), Sotuvchi STIR(7), Sotuvchi QQS(8), Sotuvchi H/R(9), 
+#           Xaridor STIR(15), Xaridor QQS(16), Xaridor H/R(17), Katalog kodi(24)
+$textCols = 2, 4, 7, 8, 9, 15, 16, 17, 24
 foreach ($col in $textCols) {
     Set-ExcelColumn -Worksheet $sheet -Column $col -NumberFormat "@"
 }
+
+# -----------------------------------------------------------------------------
+# 2. SUMMALAR VA MIQDORLAR UCHUN FORMATLASH
+# Siz so'ragan ko'rinish: ### ### ### ###,##. 
+# ExcelNumberFormat: "#,##0.00" (bu lokal sozlamaga qarab bo'shliq va vergul qilib beradi)
+# Soni(27), Narxi(28), Yetkazib Berish Narxi (QQSsiz)(29), QQS Summasi(31), Jami Summa (QQS bilan)(32)
+$moneyCols = 28, 29, 31, 32
+foreach ($col in $moneyCols) {
+    Set-ExcelColumn -Worksheet $sheet -Column $col -NumberFormat "#,##0.00"
+}
+
+# Soni ustunini biroz farqli - "#,##0.##" qilamiz (agar qoldiqsiz bo'lsa butun ko'rsatadi)
+Set-ExcelColumn -Worksheet $sheet -Column 27 -NumberFormat "#,##0.##"
 
 Close-ExcelPackage $excel
 
