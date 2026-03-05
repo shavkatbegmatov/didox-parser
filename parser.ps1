@@ -12,33 +12,34 @@ if ($zipFiles.Count -eq 0) {
 $jsonCount = 0
 
 foreach ($zip in $zipFiles) {
-    # ZIP arxivni o'qish uchun ochamiz
+    # ZIP arxivni ochish
     $archive = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
     
     foreach ($entry in $archive.Entries) {
-        # Agar fayl .json bo'lsa
         if ($entry.FullName.EndsWith(".json", [System.StringComparison]::OrdinalIgnoreCase)) {
             $jsonCount++
             
-            # JSON faylni arxivdan o'qish
             $stream = $entry.Open()
             $reader = New-Object System.IO.StreamReader($stream)
             $jsonString = $reader.ReadToEnd()
             $reader.Close()
             $stream.Close()
 
-            # JSON matnni aylantirish (xatolik bermasligi uchun Depth olib tashlandi)
             $data = $jsonString | ConvertFrom-Json
 
             # Asosiy ma'lumotlarni olish
             $fakturaNo = $data.facturadoc.facturano
             $fakturaDate = $data.facturadoc.facturadate
             $sellerName = $data.seller.name
-            $sellerStir = $data.seller.vatregcode
+            
+            # EXCEL MATN DEB QABUL QILISHI UCHUN APOSTROF QO'SHILDI
+            $sellerStir = "'" + $data.seller.vatregcode 
+            
             $buyerName = $data.buyer.name
-            $buyerStir = $data.buyer.vatregcode
+            
+            # EXCEL MATN DEB QABUL QILISHI UCHUN APOSTROF QO'SHILDI
+            $buyerStir = "'" + $data.buyer.vatregcode 
 
-            # Mahsulotlarni jadval qatorlariga yig'ish
             foreach ($product in $data.productlist.products) {
                 $row = [PSCustomObject]@{
                     "Hujjat Raqami" = $fakturaNo
@@ -65,7 +66,6 @@ if ($jsonCount -eq 0) {
     exit
 }
 
-# Natijani to'g'ridan-to'g'ri haqiqiy Excel (.xlsx) faylga saqlash
 $exportPath = "Fakturalar_hisoboti.xlsx"
 $results | Export-Excel -Path $exportPath -AutoSize -BoldTopRow -FreezeTopRow
 
