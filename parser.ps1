@@ -1,4 +1,3 @@
-# ZIP fayllar bilan ishlash uchun .NET kutubxonasini chaqiramiz
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 # Joriy papkadagi barcha .zip fayllarni topish
@@ -21,14 +20,14 @@ foreach ($zip in $zipFiles) {
         if ($entry.FullName.EndsWith(".json", [System.StringComparison]::OrdinalIgnoreCase)) {
             $jsonCount++
             
-            # JSON faylni arxivdan to'g'ridan-to'g'ri xotiraga o'qiymiz
+            # JSON faylni arxivdan o'qish
             $stream = $entry.Open()
             $reader = New-Object System.IO.StreamReader($stream)
             $jsonString = $reader.ReadToEnd()
             $reader.Close()
             $stream.Close()
 
-            # JSON matnni PowerShell obyektiga aylantirish
+            # JSON matnni aylantirish (xatolik bermasligi uchun Depth olib tashlandi)
             $data = $jsonString | ConvertFrom-Json
 
             # Asosiy ma'lumotlarni olish
@@ -39,7 +38,7 @@ foreach ($zip in $zipFiles) {
             $buyerName = $data.buyer.name
             $buyerStir = $data.buyer.vatregcode
 
-            # Har bir xizmat/mahsulot uchun qator yaratish
+            # Mahsulotlarni jadval qatorlariga yig'ish
             foreach ($product in $data.productlist.products) {
                 $row = [PSCustomObject]@{
                     "Hujjat Raqami" = $fakturaNo
@@ -58,7 +57,6 @@ foreach ($zip in $zipFiles) {
             }
         }
     }
-    # Arxivni yopish
     $archive.Dispose()
 }
 
@@ -67,8 +65,8 @@ if ($jsonCount -eq 0) {
     exit
 }
 
-# Natijani CSV faylga saqlash (Excel bemalol ocha oladi)
-$exportPath = "Fakturalar_hisoboti.csv"
-$results | Export-Csv -Path $exportPath -NoTypeInformation -Encoding UTF8
+# Natijani to'g'ridan-to'g'ri haqiqiy Excel (.xlsx) faylga saqlash
+$exportPath = "Fakturalar_hisoboti.xlsx"
+$results | Export-Excel -Path $exportPath -AutoSize -BoldTopRow -FreezeTopRow
 
-Write-Host "Muvaffaqiyatli yakunlandi! $jsonCount ta JSON fayl o'qildi va '$exportPath' fayliga saqlandi." -ForegroundColor Green
+Write-Host "Muvaffaqiyatli yakunlandi! $jsonCount ta JSON fayl o'qildi va '$exportPath' Excel fayliga saqlandi." -ForegroundColor Green
