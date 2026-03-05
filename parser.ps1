@@ -3,6 +3,24 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $script:results = @()
 $script:jsonCount = 0
 
+# JSON dan katta raqamlarni string sifatida olish uchun regex funksiya
+# ConvertFrom-Json katta raqamlarni double ga o'giradi va precision yo'qoladi
+# Shuning uchun H/R, vatregcode kabi maydonlarni regex bilan olamiz
+function Get-JsonStringValue {
+    param(
+        [string]$JsonString,
+        [string]$FieldName
+    )
+    # "fieldname" : "value" yoki "fieldname" : 12345 (ham string ham number)
+    if ($JsonString -match """$FieldName""\s*:\s*""([^""]*?)""") {
+        return $Matches[1]
+    }
+    elseif ($JsonString -match """$FieldName""\s*:\s*(\d[\d.]*)") {
+        return $Matches[1]
+    }
+    return ""
+}
+
 $zipFiles = Get-ChildItem -Path . -Filter "*.zip"
 
 if ($zipFiles.Count -eq 0) {
@@ -43,27 +61,54 @@ function Read-ZipArchive {
 
                 $data = $jsonString | ConvertFrom-Json
 
-                # Barcha identifikator va kodlarni Excel avtomatik raqam deb o'ylamasligi uchun
-                # PowerShell darajasida qat'iy [string] qilib olamiz.
+                # Katta raqamli maydonlarni REGEX orqali to'g'ridan-to'g'ri string sifatida olamiz
+                # Bu double precision yo'qolishini oldini oladi (H/R 20 xonali, vatregcode 12 xonali)
+                $sellerVat = Get-JsonStringValue -JsonString $jsonString -FieldName "vatregcode"
+                $sellerAcc = Get-JsonStringValue -JsonString $jsonString -FieldName "account"
+                
+                # seller va buyer alohida bo'lgani uchun, avval seller blokini ajratamiz
+                # Oddiyroq yo'l: seller va buyer blokdan keyin qayta oqiymiz
+                
+                # Seller blokini topamiz
+                $sellerBlock = ""
+                if ($jsonString -match '"seller"\s*:\s*\{([^}]+)\}') {
+                    $sellerBlock = $Matches[1]
+                }
+                $buyerBlock = ""
+                if ($jsonString -match '"buyer"\s*:\s*\{([^}]+)\}') {
+                    $buyerBlock = $Matches[1]
+                }
+                
+                # Seller maydonlari (regex orqali - precision saqlanadi)
+                $sellerVat = ""
+                if ($sellerBlock -match '"vatregcode"\s*:\s*"?(\d+)"?') { $sellerVat = $Matches[1] }
+                $sellerAcc = ""
+                if ($sellerBlock -match '"account"\s*:\s*"?(\d+)"?') { $sellerAcc = $Matches[1] }
+                
+                # Buyer maydonlari (regex orqali)
+                $buyerVat = ""
+                if ($buyerBlock -match '"vatregcode"\s*:\s*"?(\d+)"?') { $buyerVat = $Matches[1] }
+                $buyerAcc = ""
+                if ($buyerBlock -match '"account"\s*:\s*"?(\d+)"?') { $buyerAcc = $Matches[1] }
+                
+                # Qolgan identifikatorlar (ConvertFrom-Json orqali, chunki ular qisqa yoki string)
                 $fakturaId = [string]$data.facturaid
                 $fakturaNo = [string]$data.facturadoc.facturano
                 $fakturaDate = [string]$data.facturadoc.facturadate
                 $contractNo = [string]$data.contractdoc.contractno
                 $contractDate = [string]$data.contractdoc.contractdate
                 
-                $sellerName = [string]$data.seller.name
+                # sellertin va buyertin (9-10 xonali, double muammo yo'q)
                 $sellerStir = [string]$data.sellertin
-                $sellerVat = [string]$data.seller.vatregcode
-                $sellerAcc = [string]$data.seller.account
+                $buyerStir = [string]$data.buyertin
+                
+                $sellerName = [string]$data.seller.name
                 $sellerMfo = [string]$data.seller.bankid
                 $sellerAddr = [string]$data.seller.address
                 $sellerDir = [string]$data.seller.director
                 $sellerAccnt = [string]$data.seller.accountant
                 
                 $buyerName = [string]$data.buyer.name
-                $buyerStir = [string]$data.buyertin
-                $buyerVat = [string]$data.buyer.vatregcode
-                $buyerAcc = [string]$data.buyer.account
                 $buyerMfo = [string]$data.buyer.bankid
                 $buyerAddr = [string]$data.buyer.address
                 $buyerDir = [string]$data.buyer.director
@@ -74,7 +119,19 @@ function Read-ZipArchive {
                 if ($null -ne $products -and $products.Count -gt 0) {
                     foreach ($product in $products) {
                         
+                        # catalogcode ham katta raqam bo'lishi mumkin - regex orqali olamiz
                         $katalogCode = [string]$product.catalogcode
+                        # Agar catalogcode float ga aylanib ketgan bo'lsa, original JSON dan regex bilan olamiz
+                        # Har bir product uchun alohida regex qilish murakkab, shuning uchun
+                        # ConvertFrom-Json dan kelgan qiymatni tekshiramiz
+                        if ($katalogCode -match 'E\+' -or $katalogCode -match '\.') {
+                            # Float formatda kelgan, original JSONdan izlaymiz
+                            # ordno orqali identifikatsiya qilamiz
+                            $ordNo = [string]$product.ordno
+                            if ($jsonString -match """ordno""\s*:\s*""?$ordNo""?\s*,[\s\S]*?""catalogcode""\s*:\s*""?(\d+)""?") {
+                                $katalogCode = $Matches[1]
+                            }
+                        }
                         
                         # Summalarni sof raqam sifatida olamiz, Excel formatlaydi
                         $soni = &$convertToNumber $product.count
@@ -164,13 +221,45 @@ $sheet = $excel.Workbook.Worksheets[1]
 
 # -----------------------------------------------------------------------------
 # 1. MATNLI USTUNLARNI FORMATLASH (E+ VA NOLLARNI YO'QOTISH UCHUN)
-# Excelda "@" formati qat'iy matn degani. Bu orqali 20 xonali H/R lar nollarga aylanib ketmaydi
-# va STIR/QQS/Katalog kodlar E+ ko'rinishiga kelmaydi.
-# Ustunlar: Hujjat(2), Shartnoma(4), Sotuvchi STIR(7), Sotuvchi QQS(8), Sotuvchi H/R(9), 
-#           Xaridor STIR(15), Xaridor QQS(16), Xaridor H/R(17), Katalog kodi(24)
+# Export-Excel string qiymatlarni ham raqamga o'girib yuborishi mumkin.
+# Shuning uchun EPPlus orqali har bir yacheykani qat'iy string qilib qayta yozamiz.
+# Ustunlar: Hujjat Raqami(2), Shartnoma Raqami(4), Sotuvchi STIR(7), Sotuvchi QQS(8), 
+#           Sotuvchi H/R(9), Xaridor STIR(15), Xaridor QQS(16), Xaridor H/R(17), Katalog Kodi(24)
 $textCols = 2, 4, 7, 8, 9, 15, 16, 17, 24
+$totalRows = $sheet.Dimension.End.Row
+
 foreach ($col in $textCols) {
-    Set-ExcelColumn -Worksheet $sheet -Column $col -NumberFormat "@"
+    # Format ni "@" (Text) qilamiz
+    for ($row = 1; $row -le $totalRows; $row++) {
+        $cell = $sheet.Cells[$row, $col]
+        $cell.Style.Numberformat.Format = "@"
+    }
+}
+
+# Endi DATA qatorlarini results dan qayta yozamiz (string sifatida)
+# Bu eng ishonchli usul - EPPlus yacheykaga .Value = [string] qo'yilsa, matn sifatida saqlaydi
+$colMap = @{
+    2  = "Hujjat Raqami"
+    4  = "Shartnoma Raqami"
+    7  = "Sotuvchi STIR"
+    8  = "Sotuvchi QQS Kodi"
+    9  = "Sotuvchi H/R"
+    15 = "Xaridor STIR"
+    16 = "Xaridor QQS Kodi"
+    17 = "Xaridor H/R"
+    24 = "Katalog Kodi"
+}
+
+for ($i = 0; $i -lt $script:results.Count; $i++) {
+    $rowNum = $i + 2  # 1-qator sarlavha
+    $item = $script:results[$i]
+    foreach ($col in $textCols) {
+        $propName = $colMap[$col]
+        $val = $item.$propName
+        if ($null -ne $val) {
+            $sheet.Cells[$rowNum, $col].Value = [string]$val
+        }
+    }
 }
 
 # -----------------------------------------------------------------------------
