@@ -10,6 +10,21 @@ if ($zipFiles.Count -eq 0) {
     exit
 }
 
+# 1. Summalar va sonlarni nuqtadan vergulga o'tkazuvchi yordamchi funksiyalar
+$formatPul = {
+    param($val)
+    if ($null -eq $val -or $val -eq "") { return "0,00" }
+    # 2 xonali qoldiq bilan saqlab, nuqtani vergulga almashtiramiz
+    return $val.ToString("0.00", [System.Globalization.CultureInfo]::InvariantCulture) -replace '\.', ','
+}
+
+$formatSoni = {
+    param($val)
+    if ($null -eq $val -or $val -eq "") { return "0" }
+    # Soni uchun faqat kerak bo'lsa qoldiq chiqaramiz, nuqtani vergul qilamiz
+    return $val.ToString("0.##", [System.Globalization.CultureInfo]::InvariantCulture) -replace '\.', ','
+}
+
 function Read-ZipArchive {
     param ([System.IO.Stream]$Stream)
 
@@ -17,7 +32,6 @@ function Read-ZipArchive {
         $archive = New-Object System.IO.Compression.ZipArchive($Stream, [System.IO.Compression.ZipArchiveMode]::Read)
         
         foreach ($entry in $archive.Entries) {
-            # JSON topilsa
             if ($entry.FullName.EndsWith(".json", [System.StringComparison]::OrdinalIgnoreCase)) {
                 $script:jsonCount++
                 
@@ -29,7 +43,6 @@ function Read-ZipArchive {
 
                 $data = $jsonString | ConvertFrom-Json
 
-                # Ma'lumotlarni xavfsiz o'qish (yo'q bo'lsa $null bo'lib qolaveradi, xato bermaydi)
                 $fakturaId = $data.facturaid
                 $fakturaNo = $data.facturadoc.facturano
                 $fakturaDate = $data.facturadoc.facturadate
@@ -56,7 +69,6 @@ function Read-ZipArchive {
 
                 $products = $data.productlist.products
 
-                # Agar mahsulotlar ro'yxati mavjud bo'lsa
                 if ($null -ne $products -and $products.Count -gt 0) {
                     foreach ($product in $products) {
                         $row = [PSCustomObject]@{
@@ -89,18 +101,19 @@ function Read-ZipArchive {
                             "Katalog Kodi" = $product.catalogcode
                             "Katalog Nomi" = $product.catalogname
                             "O'lchov Birligi" = $product.packagename
-                            "Soni" = $product.count
-                            "Narxi" = $product.summa
-                            "Yetkazib Berish Narxi (QQSsiz)" = $product.deliverysum
+                            
+                            # 2. Nuqtali raqamlarni vergul bilan formatlangan holatda yozish
+                            "Soni" = &$formatSoni $product.count
+                            "Narxi" = &$formatPul $product.summa
+                            "Yetkazib Berish Narxi (QQSsiz)" = &$formatPul $product.deliverysum
                             "QQS Stavkasi (%)" = $product.vatrate
-                            "QQS Summasi" = $product.vatsum
-                            "Jami Summa (QQS bilan)" = $product.deliverysumwithvat
+                            "QQS Summasi" = &$formatPul $product.vatsum
+                            "Jami Summa (QQS bilan)" = &$formatPul $product.deliverysumwithvat
                         }
                         $script:results += $row
                     }
                 }
             }
-            # Yana ZIP arxiv topilsa, ichiga kirish (rekursiya)
             elseif ($entry.FullName.EndsWith(".zip", [System.StringComparison]::OrdinalIgnoreCase)) {
                 $innerStream = $entry.Open()
                 $memStream = New-Object System.IO.MemoryStream
@@ -115,7 +128,7 @@ function Read-ZipArchive {
         $archive.Dispose()
     }
     catch {
-        Write-Host "Faylni o'qishda kichik xatolik: $_" -ForegroundColor Red
+        Write-Host "Faylni o'qishda xatolik: $_" -ForegroundColor Red
     }
 }
 
@@ -134,28 +147,16 @@ if ($script:jsonCount -eq 0) {
 
 $exportPath = "Maksimal_Fakturalar_hisoboti.xlsx"
 
-# Ma'lumotlarni yozish
 $excel = $script:results | Export-Excel -Path $exportPath -AutoSize -BoldTopRow -FreezeTopRow -PassThru
 $sheet = $excel.Workbook.Worksheets[1]
 
-# 1. STIR va QQS kodlari uchun oddiy raqam formati ("0")
-$numberCols = 7, 8, 15, 16
-foreach ($col in $numberCols) {
-    Set-ExcelColumn -Worksheet $sheet -Column $col -NumberFormat "0"
-}
-
-# 2. H/R, MFO va Katalog kodlar ma'lumoti buzilmasligi uchun MATN formati ("@")
-$textCols = 9, 10, 17, 18, 24
+# 3. Siz aytgan barcha maxsus ustunlarni Excel buzib yubormasligi uchun sof MATN ("@") tipiga o'tkazish
+# Hujjat(2), Shartnoma(4), STIR(7, 15), QQS(8, 16), H/R(9, 17), MFO(10, 18), Katalog kodi(24)
+$textCols = 2, 4, 7, 8, 9, 10, 15, 16, 17, 18, 24
 foreach ($col in $textCols) {
     Set-ExcelColumn -Worksheet $sheet -Column $col -NumberFormat "@"
 }
 
-# 3. Summalarni ajratilgan ko'rinishga o'tkazish
-$moneyCols = 28, 29, 31, 32
-foreach ($col in $moneyCols) {
-    Set-ExcelColumn -Worksheet $sheet -Column $col -NumberFormat "#,##0.00"
-}
-
 Close-ExcelPackage $excel
 
-Write-Host "Zo'r! $script:jsonCount ta JSON fayldan barcha detallar '$exportPath' ga saqlandi." -ForegroundColor Green
+Write-Host "Zo'r! Jami $script:jsonCount ta JSON fayl '$exportPath' ga talablaringiz bo'yicha saqlandi." -ForegroundColor Green
