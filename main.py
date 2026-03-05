@@ -1,59 +1,72 @@
 import json
 import pandas as pd
 import glob
+import zipfile
+import os
 
-def fakturalarni_excelga_otkazish(json_papka_yoli, excel_fayl_nomi="Fakturalar_hisoboti.xlsx"):
+def arxivdan_excelga_otkazish(papka_yoli='.', excel_fayl_nomi="Fakturalar_hisoboti.xlsx"):
     barcha_qatorlar = []
 
-    # Papkadagi barcha .json fayllarni topish
-    json_fayllar = glob.glob(f"{json_papka_yoli}/*.json")
-    
-    if not json_fayllar:
-        print("Ushbu papkada JSON fayllar topilmadi.")
+    # Papkadagi barcha .zip fayllarni topish
+    zip_fayllar = glob.glob(os.path.join(papka_yoli, "*.zip"))
+
+    if not zip_fayllar:
+        print("Ushbu papkada ZIP fayllar topilmadi.")
         return
 
-    for fayl in json_fayllar:
-        with open(fayl, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+    json_topildi = 0
 
-        # Asosiy hujjat ma'lumotlarini ajratib olish
-        faktura_raqami = data.get("facturadoc", {}).get("facturano", "")
-        faktura_sanasi = data.get("facturadoc", {}).get("facturadate", "")
+    # Har bir ZIP faylni ochib ko'rish
+    for zip_nomi in zip_fayllar:
+        with zipfile.ZipFile(zip_nomi, 'r') as z:
+            fayllar_royxati = z.namelist()
 
-        sotuvchi_nomi = data.get("seller", {}).get("name", "")
-        sotuvchi_stir = data.get("seller", {}).get("vatregcode", "")
+            for fayl in fayllar_royxati:
+                # Agar arxiv ichidagi fayl .json bo'lsa
+                if fayl.endswith('.json'):
+                    json_topildi += 1
 
-        xaridor_nomi = data.get("buyer", {}).get("name", "")
-        xaridor_stir = data.get("buyer", {}).get("vatregcode", "")
+                    # JSON faylni arxivdan to'g'ridan-to'g'ri xotiraga o'qish
+                    with z.open(fayl) as f:
+                        data = json.load(f)
 
-        mahsulotlar = data.get("productlist", {}).get("products", [])
+                    # Ma'lumotlarni ajratib olish
+                    faktura_raqami = data.get("facturadoc", {}).get("facturano", "")
+                    faktura_sanasi = data.get("facturadoc", {}).get("facturadate", "")
 
-        # Har bir xizmat/mahsulot uchun alohida qator yaratish
-        for item in mahsulotlar:
-            qator = {
-                "Hujjat Raqami": faktura_raqami,
-                "Hujjat Sanasi": faktura_sanasi,
-                "Sotuvchi Tashkilot": sotuvchi_nomi,
-                "Sotuvchi STIR": sotuvchi_stir,
-                "Xaridor Tashkilot": xaridor_nomi,
-                "Xaridor STIR": xaridor_stir,
-                "Xizmat / Mahsulot Nomi": item.get("name", ""),
-                "Soni": item.get("count", 0),
-                "Yetkazib Berish Narxi (QQSsiz)": item.get("deliverysum", 0),
-                "QQS Summasi": item.get("vatsum", 0),
-                "Jami Summa (QQS bilan)": item.get("deliverysumwithvat", 0)
-            }
-            barcha_qatorlar.append(qator)
+                    sotuvchi_nomi = data.get("seller", {}).get("name", "")
+                    sotuvchi_stir = data.get("seller", {}).get("vatregcode", "")
 
-    # Yig'ilgan ma'lumotlarni Pandas DataFrame'ga aylantirish
+                    xaridor_nomi = data.get("buyer", {}).get("name", "")
+                    xaridor_stir = data.get("buyer", {}).get("vatregcode", "")
+
+                    mahsulotlar = data.get("productlist", {}).get("products", [])
+
+                    for item in mahsulotlar:
+                        qator = {
+                            "Hujjat Raqami": faktura_raqami,
+                            "Hujjat Sanasi": faktura_sanasi,
+                            "Sotuvchi Tashkilot": sotuvchi_nomi,
+                            "Sotuvchi STIR": sotuvchi_stir,
+                            "Xaridor Tashkilot": xaridor_nomi,
+                            "Xaridor STIR": xaridor_stir,
+                            "Xizmat / Mahsulot Nomi": item.get("name", ""),
+                            "Soni": item.get("count", 0),
+                            "Yetkazib Berish Narxi (QQSsiz)": item.get("deliverysum", 0),
+                            "QQS Summasi": item.get("vatsum", 0),
+                            "Jami Summa (QQS bilan)": item.get("deliverysumwithvat", 0)
+                        }
+                        barcha_qatorlar.append(qator)
+
+    if json_topildi == 0:
+        print("ZIP arxivlar topildi, lekin ularning ichida JSON fayllar yo'q.")
+        return
+
+    # DataFrame'ga o'girish va Excelga saqlash
     df = pd.DataFrame(barcha_qatorlar)
-
-    # DataFrame'ni Excel fayl sifatida saqlash
     df.to_excel(excel_fayl_nomi, index=False)
-    
-    print(f"Muvaffaqiyatli yakunlandi! {len(json_fayllar)} ta fayl '{excel_fayl_nomi}' ga saqlandi.")
 
-# Dasturni ishga tushirish qismi
-# Diqqat: Bu yerda JSON fayllaringiz joylashgan papka yo'lini ko'rsating.
-# Agar Python fayli bilan bir papkada bo'lsa, shunchaki '.' qoldiring.
-fakturalarni_excelga_otkazish(json_papka_yoli='.')
+    print(f"Muvaffaqiyatli yakunlandi! {len(zip_fayllar)} ta ZIP arxivdan {json_topildi} ta JSON fayl o'qildi va '{excel_fayl_nomi}' fayliga saqlandi.")
+
+# Dasturni ishga tushirish
+arxivdan_excelga_otkazish()
