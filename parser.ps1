@@ -1,84 +1,114 @@
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-# Joriy papkadagi barcha .zip fayllarni topish
+# Dastlabki o'zgaruvchilarni tayyorlaymiz
+$script:results = @()
+$script:jsonCount = 0
+
 $zipFiles = Get-ChildItem -Path . -Filter "*.zip"
-$results = @()
 
 if ($zipFiles.Count -eq 0) {
     Write-Host "Ushbu papkada ZIP fayllar topilmadi." -ForegroundColor Yellow
     exit
 }
 
-$jsonCount = 0
+# Arxivlarni ichma-ich o'quvchi Maxsus Funksiya (Rekursiya)
+function Read-ZipArchive {
+    param (
+        [System.IO.Stream]$Stream
+    )
 
-foreach ($zip in $zipFiles) {
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
-    
-    foreach ($entry in $archive.Entries) {
-        if ($entry.FullName.EndsWith(".json", [System.StringComparison]::OrdinalIgnoreCase)) {
-            $jsonCount++
-            
-            $stream = $entry.Open()
-            $reader = New-Object System.IO.StreamReader($stream)
-            $jsonString = $reader.ReadToEnd()
-            $reader.Close()
-            $stream.Close()
+    try {
+        $archive = New-Object System.IO.Compression.ZipArchive($Stream, [System.IO.Compression.ZipArchiveMode]::Read)
+        
+        foreach ($entry in $archive.Entries) {
+            # 1. Agar fayl JSON bo'lsa, uni o'qiymiz
+            if ($entry.FullName.EndsWith(".json", [System.StringComparison]::OrdinalIgnoreCase)) {
+                $script:jsonCount++
+                
+                $entryStream = $entry.Open()
+                $reader = New-Object System.IO.StreamReader($entryStream)
+                $jsonString = $reader.ReadToEnd()
+                $reader.Close()
+                $entryStream.Close()
 
-            $data = $jsonString | ConvertFrom-Json
+                $data = $jsonString | ConvertFrom-Json
 
-            # Asosiy ma'lumotlarni o'qish (Hech qanday apostroflarsiz toza olinadi)
-            $fakturaNo = $data.facturadoc.facturano
-            $fakturaDate = $data.facturadoc.facturadate
-            $sellerName = $data.seller.name
-            $sellerStir = $data.seller.vatregcode 
-            $buyerName = $data.buyer.name
-            $buyerStir = $data.buyer.vatregcode 
+                # Ma'lumotlarni ajratish
+                $fakturaNo = $data.facturadoc.facturano
+                $fakturaDate = $data.facturadoc.facturadate
+                $sellerName = $data.seller.name
+                $sellerStir = $data.seller.vatregcode 
+                $buyerName = $data.buyer.name
+                $buyerStir = $data.buyer.vatregcode 
 
-            foreach ($product in $data.productlist.products) {
-                $row = [PSCustomObject]@{
-                    "Hujjat Raqami" = $fakturaNo
-                    "Hujjat Sanasi" = $fakturaDate
-                    "Sotuvchi Tashkilot" = $sellerName
-                    "Sotuvchi STIR" = $sellerStir
-                    "Xaridor Tashkilot" = $buyerName
-                    "Xaridor STIR" = $buyerStir
-                    "Xizmat / Mahsulot Nomi" = $product.name
-                    "Soni" = $product.count
-                    "Yetkazib Berish Narxi (QQSsiz)" = $product.deliverysum
-                    "QQS Summasi" = $product.vatsum
-                    "Jami Summa (QQS bilan)" = $product.deliverysumwithvat
+                foreach ($product in $data.productlist.products) {
+                    $row = [PSCustomObject]@{
+                        "Hujjat Raqami" = $fakturaNo
+                        "Hujjat Sanasi" = $fakturaDate
+                        "Sotuvchi Tashkilot" = $sellerName
+                        "Sotuvchi STIR" = $sellerStir
+                        "Xaridor Tashkilot" = $buyerName
+                        "Xaridor STIR" = $buyerStir
+                        "Xizmat / Mahsulot Nomi" = $product.name
+                        "Soni" = $product.count
+                        "Yetkazib Berish Narxi (QQSsiz)" = $product.deliverysum
+                        "QQS Summasi" = $product.vatsum
+                        "Jami Summa (QQS bilan)" = $product.deliverysumwithvat
+                    }
+                    $script:results += $row
                 }
-                $results += $row
+            }
+            # 2. Agar fayl ZIP bo'lsa, uni xotiraga yuklab o'zini o'zi qayta chaqiramiz
+            elseif ($entry.FullName.EndsWith(".zip", [System.StringComparison]::OrdinalIgnoreCase)) {
+                $innerStream = $entry.Open()
+                $memStream = New-Object System.IO.MemoryStream
+                $innerStream.CopyTo($memStream)
+                $innerStream.Close()
+                
+                $memStream.Position = 0
+                
+                # Arxiv ichidagi arxivni o'qish (Rekursiya qadami)
+                Read-ZipArchive -Stream $memStream
+                
+                $memStream.Dispose()
             }
         }
+        $archive.Dispose()
     }
-    $archive.Dispose()
+    catch {
+        Write-Host "Arxivni o'qishda xatolik yuz berdi: $_" -ForegroundColor Red
+    }
 }
 
-if ($jsonCount -eq 0) {
-    Write-Host "ZIP arxivlar topildi, lekin ichida JSON fayllar yo'q." -ForegroundColor Yellow
+Write-Host "Arxivlar tahlil qilinmoqda, kuting..." -ForegroundColor Cyan
+
+# Asosiy papkadagi barcha ZIP fayllarni birma-bir ochib funksiyaga uzatamiz
+foreach ($zip in $zipFiles) {
+    $fileStream = [System.IO.File]::OpenRead($zip.FullName)
+    Read-ZipArchive -Stream $fileStream
+    $fileStream.Close()
+}
+
+if ($script:jsonCount -eq 0) {
+    Write-Host "Hech qanday JSON fayl topilmadi." -ForegroundColor Yellow
     exit
 }
 
 $exportPath = "Fakturalar_hisoboti.xlsx"
 
-# 1-qadam: Ma'lumotlarni Excelga yozamiz va -PassThru orqali faylni xotirada ochiq qoldiramiz
-$excel = $results | Export-Excel -Path $exportPath -AutoSize -BoldTopRow -FreezeTopRow -PassThru
-
-# 2-qadam: Excelning 1-varag'ini (Sheet) tanlaymiz
+# Excel faylga yozish va formatlash
+$excel = $script:results | Export-Excel -Path $exportPath -AutoSize -BoldTopRow -FreezeTopRow -PassThru
 $sheet = $excel.Workbook.Worksheets[1]
 
-# 3-qadam: Ustunlar formatini o'zgartiramiz
-# 4-ustun (D) va 6-ustunni (F) to'liq raqamli ko'rinishga ("0" formati) o'tkazamiz
+# STIR raqamlarini Exceledagi E+ ko'rinishidan qutqarib, "To'liq raqam" formatiga o'tkazish
 Set-ExcelColumn -Worksheet $sheet -Column 4 -NumberFormat "0"
 Set-ExcelColumn -Worksheet $sheet -Column 6 -NumberFormat "0"
 
-# Qo'shimcha: 9, 10 va 11-ustunlardagi summalarni pul formatida chiroyli qilib ajratamiz
+# Summalarni o'qishga oson bo'lishi uchun pul formatiga (bo'shliq va yuzlik bilan) o'tkazish
 Set-ExcelColumn -Worksheet $sheet -Column 9 -NumberFormat "#,##0.00"
 Set-ExcelColumn -Worksheet $sheet -Column 10 -NumberFormat "#,##0.00"
 Set-ExcelColumn -Worksheet $sheet -Column 11 -NumberFormat "#,##0.00"
 
-# 4-qadam: O'zgarishlarni saqlab, Excel faylni yopamiz
 Close-ExcelPackage $excel
 
-Write-Host "Muvaffaqiyatli yakunlandi! $jsonCount ta JSON fayl o'qildi va '$exportPath' Excel fayliga saqlandi." -ForegroundColor Green
+Write-Host "Muvaffaqiyatli yakunlandi! Jami $script:jsonCount ta JSON fayl (ichma-ich arxivlardan) o'qildi va '$exportPath' ga saqlandi." -ForegroundColor Green
