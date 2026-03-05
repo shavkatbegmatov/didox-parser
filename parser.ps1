@@ -10,19 +10,29 @@ if ($zipFiles.Count -eq 0) {
     exit
 }
 
-# 1. Summalar va sonlarni nuqtadan vergulga o'tkazuvchi yordamchi funksiyalar
+# 1. YANADA MUSTAHKAMLANGAN FORMATLASH FUNKSIYALARI
 $formatPul = {
     param($val)
     if ($null -eq $val -or $val -eq "") { return "0,00" }
-    # 2 xonali qoldiq bilan saqlab, nuqtani vergulga almashtiramiz
-    return $val.ToString("0.00", [System.Globalization.CultureInfo]::InvariantCulture) -replace '\.', ','
+    try {
+        # Matn bo'lsa ham majburan sof matematik raqamga (Double) o'tkazamiz
+        $num = [Convert]::ToDouble($val, [System.Globalization.CultureInfo]::InvariantCulture)
+        return $num.ToString("0.00", [System.Globalization.CultureInfo]::InvariantCulture) -replace '\.', ','
+    } catch {
+        # Favqulodda holatda (xato bersa) faqat matndagi nuqtani almashtiramiz
+        return [string]$val -replace '\.', ','
+    }
 }
 
 $formatSoni = {
     param($val)
     if ($null -eq $val -or $val -eq "") { return "0" }
-    # Soni uchun faqat kerak bo'lsa qoldiq chiqaramiz, nuqtani vergul qilamiz
-    return $val.ToString("0.##", [System.Globalization.CultureInfo]::InvariantCulture) -replace '\.', ','
+    try {
+        $num = [Convert]::ToDouble($val, [System.Globalization.CultureInfo]::InvariantCulture)
+        return $num.ToString("0.##", [System.Globalization.CultureInfo]::InvariantCulture) -replace '\.', ','
+    } catch {
+        return [string]$val -replace '\.', ','
+    }
 }
 
 function Read-ZipArchive {
@@ -102,7 +112,6 @@ function Read-ZipArchive {
                             "Katalog Nomi" = $product.catalogname
                             "O'lchov Birligi" = $product.packagename
                             
-                            # 2. Nuqtali raqamlarni vergul bilan formatlangan holatda yozish
                             "Soni" = &$formatSoni $product.count
                             "Narxi" = &$formatPul $product.summa
                             "Yetkazib Berish Narxi (QQSsiz)" = &$formatPul $product.deliverysum
@@ -128,7 +137,7 @@ function Read-ZipArchive {
         $archive.Dispose()
     }
     catch {
-        Write-Host "Faylni o'qishda xatolik: $_" -ForegroundColor Red
+        Write-Host "Xatolik yuz berdi: $_" -ForegroundColor Red
     }
 }
 
@@ -150,7 +159,7 @@ $exportPath = "Maksimal_Fakturalar_hisoboti.xlsx"
 $excel = $script:results | Export-Excel -Path $exportPath -AutoSize -BoldTopRow -FreezeTopRow -PassThru
 $sheet = $excel.Workbook.Worksheets[1]
 
-# 3. Siz aytgan barcha maxsus ustunlarni Excel buzib yubormasligi uchun sof MATN ("@") tipiga o'tkazish
+# Maxsus ustunlarni Excel buzib yubormasligi uchun sof MATN ("@") tipiga o'tkazish
 # Hujjat(2), Shartnoma(4), STIR(7, 15), QQS(8, 16), H/R(9, 17), MFO(10, 18), Katalog kodi(24)
 $textCols = 2, 4, 7, 8, 9, 10, 15, 16, 17, 18, 24
 foreach ($col in $textCols) {
@@ -159,4 +168,4 @@ foreach ($col in $textCols) {
 
 Close-ExcelPackage $excel
 
-Write-Host "Zo'r! Jami $script:jsonCount ta JSON fayl '$exportPath' ga talablaringiz bo'yicha saqlandi." -ForegroundColor Green
+Write-Host "Zo'r! Jami $script:jsonCount ta JSON fayl '$exportPath' ga muvaffaqiyatli saqlandi." -ForegroundColor Green
