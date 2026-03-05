@@ -12,7 +12,6 @@ if ($zipFiles.Count -eq 0) {
 $jsonCount = 0
 
 foreach ($zip in $zipFiles) {
-    # ZIP arxivni ochish
     $archive = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
     
     foreach ($entry in $archive.Entries) {
@@ -27,18 +26,13 @@ foreach ($zip in $zipFiles) {
 
             $data = $jsonString | ConvertFrom-Json
 
-            # Asosiy ma'lumotlarni olish
+            # Asosiy ma'lumotlarni o'qish (Hech qanday apostroflarsiz toza olinadi)
             $fakturaNo = $data.facturadoc.facturano
             $fakturaDate = $data.facturadoc.facturadate
             $sellerName = $data.seller.name
-            
-            # EXCEL MATN DEB QABUL QILISHI UCHUN APOSTROF QO'SHILDI
-            $sellerStir = "'" + $data.seller.vatregcode 
-            
+            $sellerStir = $data.seller.vatregcode 
             $buyerName = $data.buyer.name
-            
-            # EXCEL MATN DEB QABUL QILISHI UCHUN APOSTROF QO'SHILDI
-            $buyerStir = "'" + $data.buyer.vatregcode 
+            $buyerStir = $data.buyer.vatregcode 
 
             foreach ($product in $data.productlist.products) {
                 $row = [PSCustomObject]@{
@@ -67,6 +61,24 @@ if ($jsonCount -eq 0) {
 }
 
 $exportPath = "Fakturalar_hisoboti.xlsx"
-$results | Export-Excel -Path $exportPath -AutoSize -BoldTopRow -FreezeTopRow
+
+# 1-qadam: Ma'lumotlarni Excelga yozamiz va -PassThru orqali faylni xotirada ochiq qoldiramiz
+$excel = $results | Export-Excel -Path $exportPath -AutoSize -BoldTopRow -FreezeTopRow -PassThru
+
+# 2-qadam: Excelning 1-varag'ini (Sheet) tanlaymiz
+$sheet = $excel.Workbook.Worksheets[1]
+
+# 3-qadam: Ustunlar formatini o'zgartiramiz
+# 4-ustun (D) va 6-ustunni (F) to'liq raqamli ko'rinishga ("0" formati) o'tkazamiz
+Set-ExcelColumn -Worksheet $sheet -Column 4 -NumberFormat "0"
+Set-ExcelColumn -Worksheet $sheet -Column 6 -NumberFormat "0"
+
+# Qo'shimcha: 9, 10 va 11-ustunlardagi summalarni pul formatida chiroyli qilib ajratamiz
+Set-ExcelColumn -Worksheet $sheet -Column 9 -NumberFormat "#,##0.00"
+Set-ExcelColumn -Worksheet $sheet -Column 10 -NumberFormat "#,##0.00"
+Set-ExcelColumn -Worksheet $sheet -Column 11 -NumberFormat "#,##0.00"
+
+# 4-qadam: O'zgarishlarni saqlab, Excel faylni yopamiz
+Close-ExcelPackage $excel
 
 Write-Host "Muvaffaqiyatli yakunlandi! $jsonCount ta JSON fayl o'qildi va '$exportPath' Excel fayliga saqlandi." -ForegroundColor Green
